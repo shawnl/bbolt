@@ -122,6 +122,8 @@ func (m *Main) Run(args ...string) error {
 		return newInfoCommand(m).Run(args[1:]...)
 	case "keys":
 		return newKeysCommand(m).Run(args[1:]...)
+	case "dump-bucket":
+		return newDumpBucketCommand(m).Run(args[1:]...)
 	case "page":
 		return newPageCommand(m).Run(args[1:]...)
 	case "pages":
@@ -152,6 +154,7 @@ The commands are:
     get         print the value of a key in a bucket
     info        print basic info
     keys        print a list of keys in a bucket
+    dump-bucket print all keys and values in a bucket
     help        print this screen
     page        print one or more pages in human readable format
     pages       print list of pages with their types
@@ -1192,6 +1195,74 @@ func (cmd *KeysCommand) Usage() string {
 usage: bolt keys PATH BUCKET
 
 Print a list of keys in the given bucket.
+`, "\n")
+}
+
+type DumpBucketCommand struct {
+	Stdin  io.Reader
+	Stdout io.Writer
+	Stderr io.Writer
+}
+
+func newDumpBucketCommand(m *Main) *DumpBucketCommand {
+	return &DumpBucketCommand{
+		Stdin:  m.Stdin,
+		Stdout: m.Stdout,
+		Stderr: m.Stderr,
+	}
+}
+
+// Run executes the command.
+func (cmd *DumpBucketCommand) Run(args ...string) error {
+	// Parse flags.
+	fs := flag.NewFlagSet("", flag.ContinueOnError)
+	help := fs.Bool("h", false, "")
+	if err := fs.Parse(args); err != nil {
+		return err
+	} else if *help {
+		fmt.Fprintln(cmd.Stderr, cmd.Usage())
+		return ErrUsage
+	}
+
+	// Require database path and bucket.
+	path, bucket := fs.Arg(0), fs.Arg(1)
+	if path == "" {
+		return ErrPathRequired
+	} else if _, err := os.Stat(path); os.IsNotExist(err) {
+		return ErrFileNotFound
+	} else if bucket == "" {
+		return ErrBucketRequired
+	}
+
+	// Open database.
+	db, err := bolt.Open(path, 0666, nil)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	// Print keys.and values
+	return db.View(func(tx *bolt.Tx) error {
+		// Find bucket.
+		b := tx.Bucket([]byte(bucket))
+		if b == nil {
+			return ErrBucketNotFound
+		}
+
+		// Iterate over each key.
+		return b.ForEach(func(key, value []byte) error {
+			fmt.Fprintf(cmd.Stdout, "%s\t%s\n", string(key), string(value))
+			return nil
+		})
+	})
+}
+
+// Usage returns the help message.
+func (cmd *DumpBucketCommand) Usage() string {
+	return strings.TrimLeft(`
+usage: bolt dump-bucket PATH BUCKET
+
+Print a list of keys and values in the given bucket.
 `, "\n")
 }
 
